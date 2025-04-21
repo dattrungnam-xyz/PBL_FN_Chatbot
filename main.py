@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def load_environment():
     load_dotenv()
     api_key = os.getenv("PINECONE_API_KEY")
-    index_name = os.getenv("PINECONE_INDEX_NAME", "ocop-vietnamese")
+    index_name = "ocop-vietnamese768"
 
     if not api_key:
         logger.error("Không tìm thấy PINECONE_API_KEY")
@@ -33,7 +33,7 @@ def initialize_pinecone(api_key: str, index_name: str):
         logger.info(f"Tạo mới Pinecone index: {index_name}")
         pc.create_index(
             name=index_name,
-            dimension=384,
+            dimension=768,
             metric="cosine",
             spec=ServerlessSpec(cloud="aws", region="us-east-1")
         )
@@ -104,12 +104,12 @@ def main():
         logger.info(f"Tổng cộng {len(df)} sản phẩm.")
 
         # Mô hình embedding
-        model = SentenceTransformer("sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2")
+        model = SentenceTransformer("bkai-foundation-models/vietnamese-bi-encoder")
 
         # Text splitter
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=400,
-            chunk_overlap=50
+            chunk_size=600,
+            chunk_overlap=100
         )
 
         # Tạo vectors
@@ -120,7 +120,7 @@ def main():
         batch_size = 100
         for i in range(0, len(vectors), batch_size):
             batch = vectors[i:i+batch_size]
-            index.upsert(vectors=batch, namespace="ocop")
+            index.upsert(vectors=batch, namespace="ocop_bkai_foundation_model")
             logger.info(f"Đã upsert {len(batch)} vectors")
 
         logger.info("Hoàn tất upsert vào Pinecone.")
