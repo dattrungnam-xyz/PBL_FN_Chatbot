@@ -6,7 +6,7 @@ from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from langchain_community.llms import Ollama
 from langchain_pinecone import Pinecone as LangchainPinecone
-from langchain.embeddings.huggingface import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 import pinecone
 
 # Logging
@@ -28,17 +28,26 @@ index = pc.Index(PINECONE_INDEX_NAME)
 
 # Prompt template
 prompt = """
-Bạn là một trợ lý ảo chuyên nghiệp, thân thiện, có nhiệm vụ tư vấn và hỗ trợ người dùng về các sản phẩm OCOP của Việt Nam.
+Bạn là một trợ lý bán hàng chuyên nghiệp.
 
-Dưới đây là một số thông tin liên quan đến các sản phẩm OCOP:
+Nhiệm vụ của bạn:
+- Đọc kỹ yêu cầu của khách hàng.
+- Đọc danh sách các sản phẩm có sẵn.
+- Chọn ra những sản phẩm phù hợp nhất với nhu cầu của khách hàng.
+- Trình bày câu trả lời một cách tự nhiên, lịch sự, hấp dẫn.
+- Đưa ra từ 1 đến 3 sản phẩm gợi ý.
+- Nếu không tìm thấy sản phẩm phù hợp, hãy xin lỗi khách hàng nhẹ nhàng.
 
+Thông tin khách hàng cung cấp:
+"{user_query}"
+
+Danh sách sản phẩm:
 {context}
 
-Câu hỏi của người dùng: {user_query}
-
-Dựa trên thông tin trên, hãy trả lời một cách ngắn gọn, chính xác và thân thiện. Nếu không có thông tin liên quan, hãy lịch sự cho biết rằng bạn chưa có dữ liệu phù hợp.
-
-Trả lời:
+Yêu cầu cách trả lời:
+- Viết câu trả lời mạch lạc, tự nhiên, như đang trò chuyện.
+- Nếu có thể, đề xuất thêm thông tin nổi bật như nguồn gốc, giá, điểm nổi bật.
+- Kết thúc bằng lời mời mua hàng hoặc hỗ trợ thêm.
 """
 
 # ✅ Dùng embedding từ BkAI
@@ -70,7 +79,7 @@ def chatbot():
         if not user_query:
             return jsonify({"error": "Missing query"}), 400
 
-        related_docs = vector_store.similarity_search(user_query, k=3)
+        related_docs = vector_store.similarity_search(user_query, k=5)
         context_text = "\n\n".join([doc.page_content for doc in related_docs])
         print("Matched Context:", context_text)
 
