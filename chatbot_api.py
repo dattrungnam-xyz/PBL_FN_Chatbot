@@ -4,10 +4,10 @@ from flask import Flask, request, jsonify
 from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
-from langchain_community.llms import Ollama
 from langchain_pinecone import Pinecone as LangchainPinecone
 from langchain_community.embeddings import HuggingFaceEmbeddings
 import pinecone
+from langchain_together import Together
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -67,7 +67,13 @@ vector_store = LangchainPinecone(
 
 # LLM Chain
 template = PromptTemplate(input_variables=["context", "user_query"], template=prompt)
-llm = Ollama(model="gemma:2b", base_url="http://127.0.0.1:11434")
+llm = Together(
+    model="mistralai/Mistral-7B-Instruct-v0.1",
+    api_key=os.getenv("TOGETHER_API_KEY"),
+    temperature=0.7,
+    top_k=50,
+)
+
 llm_chain = LLMChain(prompt=template, llm=llm)
 
 # API endpoint
@@ -79,9 +85,9 @@ def chatbot():
         if not user_query:
             return jsonify({"error": "Missing query"}), 400
 
-        related_docs = vector_store.similarity_search(user_query, k=5)
+        related_docs = vector_store.similarity_search(user_query, k=10)
+        
         context_text = "\n\n".join([doc.page_content for doc in related_docs])
-        print("Matched Context:", context_text)
 
         response = llm_chain.run(context=context_text, user_query=user_query)
 
