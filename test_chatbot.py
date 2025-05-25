@@ -11,15 +11,17 @@ from sklearn.metrics.pairwise import cosine_similarity
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
 from langchain_together import Together
+from dotenv import load_dotenv
 
+load_dotenv()
 # ---------- Flask App ----------
 app = Flask(__name__)
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 # ---------- MySQL Config ----------
+
 MYSQL_CONFIG = {
     "host": os.getenv("DB_HOST"),
     "user": os.getenv("DB_USER"),
@@ -132,7 +134,7 @@ Kết thúc phần message bằng lời cảm ơn chân thành và lời mời k
 )
 
 
-
+print(os.getenv("TOGETHER_API_KEY"))
 llm = Together(
     model="deepseek-ai/DeepSeek-V3",
     api_key=os.getenv("TOGETHER_API_KEY"),    

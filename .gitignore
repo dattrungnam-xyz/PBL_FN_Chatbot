@@ -27,3 +27,4 @@ env/
 
 *.faiss
 index/
+docker-compose.yml
