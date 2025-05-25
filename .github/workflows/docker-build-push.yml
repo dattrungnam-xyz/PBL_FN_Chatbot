@@ -44,6 +44,3 @@ jobs:
 
             echo "Removing old images..."
             docker images -q dattrungnam510/chat_ocop_mart:latest | xargs -r docker rmi -f
-
-            echo "Starting the container with the new image..."
-            docker compose -f /home/ocop/docker-compose-chat.yml up -d

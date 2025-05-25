@@ -1,104 +1,71 @@
-import os
-import logging
-from flask import Flask, request, jsonify
-from dotenv import load_dotenv
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from recommend import shared_data, data_lock, tfidf_vectorizer  # Nếu cùng process
+from flask import request, jsonify
 from langchain.prompts import PromptTemplate
 from langchain.chains import LLMChain
-from langchain_pinecone import Pinecone as LangchainPinecone
-from langchain_community.embeddings import HuggingFaceEmbeddings
-import pinecone
 from langchain_together import Together
+import logging
 
-# Logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# Logging setup
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Flask app
-app = Flask(__name__)
-load_dotenv()
+# LangChain setup
+prompt_template = PromptTemplate(
+    input_variables=["context", "user_query"],
+    template="""
+Bạn là một trợ lý tư vấn bán hàng chuyên nghiệp.
 
-# Environment
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_INDEX_NAME ="ocop-vietnamese768"
-PINECONE_NAMESPACE = "ocop_bkai_foundation_model"
-
-# Pinecone init
-pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
-index = pc.Index(PINECONE_INDEX_NAME)
-
-# Prompt template
-prompt = """
-Bạn là một trợ lý bán hàng chuyên nghiệp.
-
-Nhiệm vụ của bạn:
-- Đọc kỹ yêu cầu của khách hàng.
-- Đọc danh sách các sản phẩm có sẵn.
-- Chọn ra những sản phẩm phù hợp nhất với nhu cầu của khách hàng.
-- Trình bày câu trả lời một cách tự nhiên, lịch sự, hấp dẫn.
-- Đưa ra từ 1 đến 3 sản phẩm gợi ý.
-- Nếu không tìm thấy sản phẩm phù hợp, hãy xin lỗi khách hàng nhẹ nhàng.
-
-Thông tin khách hàng cung cấp:
+Nhu cầu khách hàng:
 "{user_query}"
 
-Danh sách sản phẩm:
+Danh sách sản phẩm phù hợp:
 {context}
 
-Yêu cầu cách trả lời:
-- Viết câu trả lời mạch lạc, tự nhiên, như đang trò chuyện.
-- Nếu có thể, đề xuất thêm thông tin nổi bật như nguồn gốc, giá, điểm nổi bật.
-- Kết thúc bằng lời mời mua hàng hoặc hỗ trợ thêm.
+Viết câu trả lời thân thiện, chuyên nghiệp và tự nhiên.
 """
-
-# ✅ Dùng embedding từ BkAI
-embedding_model = HuggingFaceEmbeddings(
-    model_name="bkai-foundation-models/vietnamese-bi-encoder",
-    model_kwargs={"device": "cpu"},  # hoặc "cuda" nếu bạn có GPU
-    encode_kwargs={"normalize_embeddings": True}
 )
 
-# Pinecone + LangChain
-vector_store = LangchainPinecone(
-    index=index,
-    embedding=embedding_model,
-    text_key="chunk_text",
-    namespace=PINECONE_NAMESPACE
-)
-
-# LLM Chain
-template = PromptTemplate(input_variables=["context", "user_query"], template=prompt)
 llm = Together(
     model="mistralai/Mistral-7B-Instruct-v0.1",
     api_key=os.getenv("TOGETHER_API_KEY"),
     temperature=0.7,
-    top_k=50,
 )
 
-llm_chain = LLMChain(prompt=template, llm=llm)
+llm_chain = LLMChain(prompt=prompt_template, llm=llm)
 
-# API endpoint
-@app.route('/chatbot', methods=['POST'])
+@app.route("/chatbot", methods=["POST"])
 def chatbot():
     try:
         user_query = request.json.get("query", "")
-        print(index.describe_index_stats())
         if not user_query:
             return jsonify({"error": "Missing query"}), 400
 
-        related_docs = vector_store.similarity_search(user_query, k=10)
-        
-        context_text = "\n\n".join([doc.page_content for doc in related_docs])
+        with data_lock:
+            data_snapshot = shared_data
 
+        if not data_snapshot:
+            return jsonify({"error": "Product data not ready"}), 503
+
+        # TF-IDF vectorize query
+        user_vector = tfidf_vectorizer.transform([user_query])
+        similarities = cosine_similarity(user_vector, data_snapshot.tfidf_matrix).flatten()
+
+        # Lấy top 5 sản phẩm gần nhất
+        top_indices = similarities.argsort()[-5:][::-1]
+        top_products = [data_snapshot.products[i] for i in top_indices]
+
+        # Tạo context text
+        context_text = "\n\n".join([
+            f"{p['name']} ({p['province']}) - {p['price']}đ - {p['description']}" for p in top_products
+        ])
+
+        # Sinh câu trả lời từ LLM
         response = llm_chain.run(context=context_text, user_query=user_query)
 
         return jsonify({"response": response}), 200
 
     except Exception as e:
-        logger.error(f"Error during processing the query: {str(e)}")
+        logger.error(f"Chatbot error: {e}")
         return jsonify({"error": str(e)}), 500
-
-# Run app
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
-    
-

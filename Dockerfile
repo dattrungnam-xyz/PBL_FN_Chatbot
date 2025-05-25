@@ -1,12 +1,6 @@
 FROM python:3.13-slim
 
-ARG PINECONE_API_KEY
-ARG TOGETHER_API_KEY
-
-
-ENV PINECONE_API_KEY=${PINECONE_API_KEY} \
-    TOGETHER_API_KEY=${TOGETHER_API_KEY} \
-    PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
@@ -17,4 +11,4 @@ COPY . .
 
 EXPOSE 5000
 
-CMD ["python", "chatbot_api.py"]
+CMD ["python", "test_chatbot.py"]

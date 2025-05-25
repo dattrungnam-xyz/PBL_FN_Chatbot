@@ -15,3 +15,5 @@ pip freeze > requirements.txt
 ## linux ollama change port
 export OLLAMA_HOST=127.0.0.1:7749
 ollama serve
+
+source venv/bin/activate 
