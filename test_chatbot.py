@@ -29,6 +29,7 @@ MYSQL_CONFIG = {
     "database": os.getenv("DB_DATABASE"),
     "port": int(os.getenv("DB_PORT", 3306)),
 }
+print(MYSQL_CONFIG)
 
 # ---------- Shared Data ----------
 class DataSnapshot:
