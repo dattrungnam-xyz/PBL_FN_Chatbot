@@ -2,26 +2,31 @@ import os
 import logging
 import pymysql
 import time
-import numpy as np
 import json
+import re
 from flask import Flask, request, jsonify
+from dotenv import load_dotenv
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 from langchain.prompts import PromptTemplate
+from langchain.schema import Document
+from langchain.vectorstores import FAISS
+from langchain.embeddings.base import Embeddings
 from langchain.chains import LLMChain
 from langchain_together import Together
-from dotenv import load_dotenv
 
+# ---------- Load environment ----------
 load_dotenv()
+
 # ---------- Flask App ----------
 app = Flask(__name__)
 
 # ---------- Logging ----------
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-# ---------- MySQL Config ----------
 
+# ---------- MySQL Config ----------
 MYSQL_CONFIG = {
     "host": os.getenv("DB_HOST"),
     "user": os.getenv("DB_USER"),
@@ -29,16 +34,6 @@ MYSQL_CONFIG = {
     "database": os.getenv("DB_DATABASE"),
     "port": int(os.getenv("DB_PORT", 3306)),
 }
-print(MYSQL_CONFIG)
-
-# ---------- Shared Data ----------
-class DataSnapshot:
-    def __init__(self, products, tfidf_matrix):
-        self.products = products
-        self.tfidf_matrix = tfidf_matrix
-
-shared_data = None
-tfidf_vectorizer = None
 
 # ---------- Category Mapping ----------
 CATEGORY_MAP = {
@@ -48,55 +43,62 @@ CATEGORY_MAP = {
     "HANDICRAFTS_DECORATION": "Đồ trang trí",
 }
 
-# ---------- Load Products from MySQL ----------
-def load_products_from_mysql():
+# ---------- TF-IDF Embedding Adapter ----------
+class TfidfEmbeddings(Embeddings):
+    def __init__(self):
+        self.vectorizer = TfidfVectorizer()
+        self.documents = []
+
+    def fit(self, docs):
+        self.documents = docs
+        self.vectorizer.fit(docs)
+
+    def embed_documents(self, texts):
+        return self.vectorizer.transform(texts).toarray()
+
+    def embed_query(self, text):
+        return self.vectorizer.transform([text]).toarray()[0]
+
+# ---------- Load Products ----------
+def load_products():
     try:
-        connection = pymysql.connect(**MYSQL_CONFIG)
-        with connection.cursor(pymysql.cursors.DictCursor) as cursor:
+        conn = pymysql.connect(**MYSQL_CONFIG)
+        with conn.cursor(pymysql.cursors.DictCursor) as cursor:
             query = """
                 SELECT 
-                    p.id, 
-                    p.name, 
-                    p.category, 
-                    s.province, 
-                    p.description, 
-                    p.price, 
-                    p.star,
-                    p.status
+                    p.id, p.name, p.category, s.province, 
+                    p.description, p.price, p.star, p.status
                 FROM product p
                 JOIN seller s ON p.sellerId = s.id
-           
             """
             cursor.execute(query)
             results = cursor.fetchall()
-           
-        connection.close()
-        logger.info("✅ Loaded products from MySQL")
-        
+        conn.close()
         return results
     except Exception as e:
-        logger.error(f"⚠️ MySQL error: {e}")
+        logger.error(f"MySQL error: {e}")
         return []
 
-# ---------- TF-IDF Embedding ----------
-def load_products_and_vectorize():
-    global shared_data, tfidf_vectorizer
+# ---------- Build LangChain Components ----------
+def build_vectorstore(products):
+    docs = []
+    metadatas = []
+    contents = []
 
-    products = load_products_from_mysql()
-    if not products:
-        logger.warning("⚠️ No products loaded")
-        return
-
-    documents = []
     for p in products:
-        doc = f"{p['name']} {p['description']} {p['province']} {p['price']}đ {CATEGORY_MAP.get(p['category'], p['category'])} {p['star']} sao OCOP"
-        documents.append(doc)
+        content = f"{p['name']} {p['description']} {p['province']} {p['price']}đ {CATEGORY_MAP.get(p['category'], p['category'])} {p['star']} sao OCOP"
+        contents.append(content)
+        metadata = {"product": p}
+        metadatas.append(metadata)
+        docs.append(Document(page_content=content, metadata=metadata))
 
-    tfidf_vectorizer = TfidfVectorizer()
-    tfidf_matrix = tfidf_vectorizer.fit_transform(documents)
+    embedding_model = TfidfEmbeddings()
+    embedding_model.fit(contents)
 
-    shared_data = DataSnapshot(products, tfidf_matrix)
-    logger.info(f"✅ Vectorized {len(products)} products")
+    vectorstore = FAISS.from_documents(docs, embedding_model)
+    return vectorstore
+
+# ---------- Prompt Template ----------
 prompt_template = PromptTemplate(
     input_variables=["context", "user_query"],
     template="""
@@ -134,78 +136,51 @@ Kết thúc phần message bằng lời cảm ơn chân thành và lời mời k
 """
 )
 
-
-print(os.getenv("TOGETHER_API_KEY"))
 llm = Together(
     model="deepseek-ai/DeepSeek-V3",
-    api_key=os.getenv("TOGETHER_API_KEY"),    
+    api_key=os.getenv("TOGETHER_API_KEY"),
     temperature=0.7,
     max_tokens=2000,
 )
 
-llm_chain = LLMChain(prompt=prompt_template, llm=llm)
-
-# ---------- Chatbot API ----------
+# ---------- Flask Route ----------
 @app.route("/chatbot", methods=["POST"])
 def chatbot():
+    user_query = request.json.get("query", "").strip()
+    if not user_query:
+        return jsonify({"error": "Missing query"}), 400
+
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    related_docs = retriever.get_relevant_documents(user_query)
+
+    context = "\n\n".join([
+        f"{doc.metadata['product']['name']} | id: {doc.metadata['product']['id']} | Tỉnh: {doc.metadata['product']['province']} | Giá: {doc.metadata['product']['price']}đ | Loại: {CATEGORY_MAP.get(doc.metadata['product']['category'], doc.metadata['product']['category'])} | OCOP: {doc.metadata['product']['star']} sao\nMô tả: {doc.metadata['product']['description']}"
+        for doc in related_docs
+    ])
+
+    chain = LLMChain(llm=llm, prompt=prompt_template)
+    result = chain.run({"context": context, "user_query": user_query})
+
     try:
-        user_query = request.json.get("query", "").strip()
-        if not user_query:
-            return jsonify({"error": "Missing query"}), 400
-
-        if not shared_data or not tfidf_vectorizer:
-            return jsonify({"error": "Product data not ready"}), 503
-
-        user_vector = tfidf_vectorizer.transform([user_query])
-        similarities = cosine_similarity(user_vector, shared_data.tfidf_matrix).flatten()
-
-        top_indices = similarities.argsort()[-5:][::-1]
-        top_products = [shared_data.products[i] for i in top_indices]
-        print(top_products)
-        context_text = "\n\n".join([
-            f"{p['name']} |  id: {p['id']} | Tỉnh: {p['province']} | Giá: {p['price']}đ | Loại: {CATEGORY_MAP.get(p['category'], p['category'])} | OCOP: {p['star']} sao\nMô tả: {p['description']}"
-            for p in top_products
-        ])
-        import json
-        import re
-
-        response = llm_chain.run(context=context_text, user_query=user_query)
-
-        try:
-            json_str = re.search(r"\{.*\}", response, re.DOTALL).group()
-            parsed_response = json.loads(json_str)
-        except Exception as e:
-            print("Lỗi khi trích xuất hoặc parse JSON:", e)
-            print("Response nhận được từ LLM:", response)
-            parsed_response = {}
-
-        # Bây giờ bạn có thể truy cập như dict
-        print(parsed_response["id_product"])
-        print(parsed_response["message"])
-        # Trả về đúng định dạng
-        return jsonify({
-            "id_product": parsed_response["id_product"],
-            "message": parsed_response["message"]
-        }), 200
-
+        json_str = re.search(r"\{.*\}", result, re.DOTALL).group()
+        parsed = json.loads(json_str)
     except Exception as e:
-        logger.error(f"Chatbot error: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "LLM parsing error", "raw": result}), 500
 
-# ---------- Init on Start ----------
-def load_and_wait():
-    load_products_and_vectorize()
-    for _ in range(10):
-        if shared_data:
-            break
-        logger.info("⏳ Waiting for data to be ready...")
-        time.sleep(1)
-    else:
-        logger.error("❌ Timeout: Failed to load product data in time.")
+    return jsonify({
+        "id_product": parsed.get("id_product", []),
+        "message": parsed.get("message", "")
+    })
+
+# ---------- Init Data ----------
+logger.info("⏳ Loading products and building vectorstore...")
+products = load_products()
+if not products:
+    logger.error("❌ No products found. Exiting.")
+    exit(1)
+
+vectorstore = build_vectorstore(products)
+logger.info("✅ Vectorstore is ready.")
 
 if __name__ == "__main__":
-    load_and_wait()
-    if shared_data is None:
-        logger.error("❌ Không thể khởi động vì chưa có dữ liệu sản phẩm.")
-    else:
-        app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000)

@@ -1,6 +1,6 @@
 ## create, active venv
 python -m venv venv
-source .venv/bin/activate  # macOS/Linux
+source venv/bin/activate  # macOS/Linux
 venv\Scripts\activate     # Windows
 
 ## update requirements file
