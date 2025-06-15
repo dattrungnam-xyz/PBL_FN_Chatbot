@@ -66,7 +66,7 @@ def load_products():
         with conn.cursor(pymysql.cursors.DictCursor) as cursor:
             query = """
                 SELECT 
-                    p.id, p.name, p.category, s.province, 
+                    p.id, p.name, p.category, s.provinceName, 
                     p.description, p.price, p.star, p.status
                 FROM product p
                 JOIN seller s ON p.sellerId = s.id
@@ -86,7 +86,7 @@ def build_vectorstore(products):
     contents = []
 
     for p in products:
-        content = f"{p['name']} {p['description']} {p['province']} {p['price']}đ {CATEGORY_MAP.get(p['category'], p['category'])} {p['star']} sao OCOP"
+        content = f"{p['name']} {p['description']} {p['provinceName']} {p['price']}đ {CATEGORY_MAP.get(p['category'], p['category'])} {p['star']} sao OCOP"
         contents.append(content)
         metadata = {"product": p}
         metadatas.append(metadata)
@@ -150,11 +150,11 @@ def chatbot():
     if not user_query:
         return jsonify({"error": "Missing query"}), 400
 
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 10})
     related_docs = retriever.get_relevant_documents(user_query)
 
     context = "\n\n".join([
-        f"{doc.metadata['product']['name']} | id: {doc.metadata['product']['id']} | Tỉnh: {doc.metadata['product']['province']} | Giá: {doc.metadata['product']['price']}đ | Loại: {CATEGORY_MAP.get(doc.metadata['product']['category'], doc.metadata['product']['category'])} | OCOP: {doc.metadata['product']['star']} sao\nMô tả: {doc.metadata['product']['description']}"
+        f"{doc.metadata['product']['name']} | id: {doc.metadata['product']['id']} | Tỉnh: {doc.metadata['product']['provinceName']} | Giá: {doc.metadata['product']['price']}đ | Loại: {CATEGORY_MAP.get(doc.metadata['product']['category'], doc.metadata['product']['category'])} | OCOP: {doc.metadata['product']['star']} sao\nMô tả: {doc.metadata['product']['description']}"
         for doc in related_docs
     ])
 
